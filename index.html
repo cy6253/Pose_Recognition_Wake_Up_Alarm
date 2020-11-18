@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="naver-site-verification" content="a4bbba88acb05e0df00c6f8cce2b1ee7786d79a4" />
+    <title>전자공학응용실험_4조</title>
+</head>
+<body>
+<form name=exf1>
+    <B>전자공학응용실험_4조_2016726052_조용현, 2016706015 연제훈</B><br>
+    <B>알람설정 :</B>
+    <input type=text name=h size=2>시  <input type=text name=m size=2> 분 <input type=text name=s size=2>초 
+    <input type=button name=b onclick=setAlarm() value="Set Alarm"><input type=button name=r onclick=clearAlarm() value="Turn Alarm Off"><BR>
+    <B>현재시간 :</B> 
+    <input type=text name=ch size=2>시<input type=text name=cm size=2>분 <input type=text name=cs size=2>초
+</form>
+<form name="sw">
+    <B>제한 시간 :</B>
+    <input type="text" name="beg2" size="7" value="01:00">
+    <B>남은 시간 :</B>
+    <input type="text" name="disp2" size="7">
+</form>
+<div><canvas id="canvas"></canvas></div>
+<div id="label-container"></div>
+<p>Usage <br>Set the time that you want to get up <br>Set up camera like below figure<br>Operation of this is like below figure</p>
+<img src="in.png"/>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+<script type="text/javascript">
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    const URL = "./my_model/";
+    let model, webcam, ctx, labelContainer, maxPredictions;
+
+    async function init() {
+        const modelURL = URL + "model.json";//딥러닝 모델 파일
+        const metadataURL = URL + "metadata.json";// 학습된 weigth를 가진 데이터 파일
+
+        // load the model and metadata
+        // Refer to tmImage.loadFromFiles() in the API to support files from a file picker
+        // Note: the pose library adds a tmPose object to your window (window.tmPose)
+        model = await tmPose.load(modelURL, metadataURL);
+        maxPredictions = model.getTotalClasses();
+
+        // Convenience function to setup a webcam
+        const size = 200;
+        const flip = true; // whether to flip the webcam
+        webcam = new tmPose.Webcam(size, size, flip); // width, height, flip
+        await webcam.setup(); // request access to the webcam
+        await webcam.play();
+        window.requestAnimationFrame(loop);
+
+        // append/get elements to the DOM
+        const canvas = document.getElementById("canvas");
+        canvas.width = size; canvas.height = size;
+        ctx = canvas.getContext("2d");
+        labelContainer = document.getElementById("label-container");
+        for (let i = 0; i < maxPredictions; i++) { // and class labels
+            labelContainer.appendChild(document.createElement("div"));
+        }
+    }
+
+    async function loop(timestamp) {
+        webcam.update(); // update the webcam frame
+        await predict();// frame마다 예측
+        window.requestAnimationFrame(loop);
+    }
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    var i = 0;//Input 안정화를 위한 변수
+    var state = "Case1";// FSM에 초기 State
+    var limit=0; // 제한시간이 종료됐음을 확인하는 변수
+    var audio1 = new Audio('curse.mp3');//오디오 파일 1 로드
+    var audio2 = new Audio('azang.mp3');//오디오 파일 2 로드
+    async function predict() {
+        // Prediction #1: run input through posenet
+        // estimatePose can take in an image, video or canvas html element
+        const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+        // Prediction 2: run input through teachable machine classification model
+        const prediction = await model.predict(posenetOutput);
+        arr = [prediction[0].probability.toFixed(2),prediction[1].probability.toFixed(2),prediction[2].probability.toFixed(2),prediction[3].probability.toFixed(2)]
+        //arr 배열에 딥러닝이 예측한 각 Class에 해당되는 probability 대입
+        input = prediction[indexOfMax(arr)].className//가장 큰 probability를 가진 arr배열의 index의 Class를 input에 대입
+        i++;//frame마다 i를 1씩 증가시켜서
+        if(i%50==0)////50 frame마다 FSM의 상태 update
+        {
+            console.log("before input",input);//현재 state를 기준으로 딥러닝이 예측한 input을 출력
+            console.log("before state : ",state);//현재 State를 출력
+            console.log("Volume : ",audio1.volume);//오디오1의 현재 볼륨 출력
+            state = transition(state,input,limit);//FSM 함수에 현재 State와 현재 Input과 제한시간이 초과되었는지 or 초과되지 않았는지 판별하는 limit 변수 전달
+            console.log("after state : ",state);//FSM 함수에 따른 다음 State 출력
+        }
+        // if(state == "Case1")// Case1의 경우 초기 State로 기능을 부여하지 않았다.
+        // {
+        //         기능 없음
+        // }
+        if(state == "Case2")// Case2의 경우 사용자가 알람을 듣고 일어난 상태이므로, 알람을 Turn off한다.
+        {
+            audio1.pause();
+            audio2.pause();
+        }
+        else if(state == "Case3")// Case3의 경우 사용자가 알람이 울려도 일어나지 못하여, 사용자를 깨우기 위해 알람의 소리를 증가시킨다.
+        {
+            audio1.volume = 1;
+        }
+        else if(state == "Case4")// Case4의 경우 사용자가 알람을 듣고 일어났다가, 다시 눕는 경우로 시끄러운 음악으로 변경하여 다시 잠들지 못하게 한다.
+        {
+            audio1.pause();
+            audio2.play();
+        }
+        // finally draw the poses
+        drawPose(pose);
+    }
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    function transition(state,input,limit)//input ///stand : 0///sit : 1///lying : 2///nobody = 3
+    {
+        if(state == "Case1")//현재 State가 Case1일 때
+        {
+            if(input == "Lying")//inout이 Lying인 경우
+            {
+                state = "Case1";//사용자가 계속 누워있는 상태이므로 Case1을 유지한다.
+            }
+            else if(input=="Stand"||input=="Sit"||input=="Nobody")//input이 Stand or Sit or Nobody인 경우
+            {
+                state = "Case2";//사용자가 알람을 듣고 일어났으므로 Case2로 상태를 변화시킨다.
+            }
+            if (input == "Lying" && limit == 1)//input이 Lying이고, 제한시간을 초과했을 경우
+            {
+                state = "Case3";//State를 Case3로 업데이트하여 사용자를 깨우기 위해 알람의 강도를 높인다.
+            }
+        }
+        else if(state == "Case2")//현재 State가 Case2일 때
+        {
+            if(input == "Lying"||input == "Sit")//input이 Lying or Sit인 경우 
+            {
+                state = "Case4";//사용자가 일어났다가 다시 눕는 경우 State를 Case4로 업데이트 한다.
+            }
+            else if(input=="Stand"||input=="Sit"||input=="Nobody")//input이 Stand or Lying or Nobody인 경우
+            {
+                state = "Case2";//사용자가 일어난 상태이므로 Case2를 유지한다.
+            }
+        }
+        else if(state == "Case3")//현재 State가 Case3일 때
+        {
+            if(input == "Lying")//input이 Lying인 경우
+            {
+                state = "Case3";// 사용자는 계속 누워있으므로 Case3를 유지한다.
+            }
+            else if(input=="Stand"||input=="Sit"||input=="Nobody")//input이 Stand or Sit or Nobody인 경우
+            {
+                state = "Case2";//사용자가 일어났으므로 State를 Case2로 업데이트한다.
+            }
+        }
+        else if(state == "Case4")//현재 State가 Case4일 때
+        {
+            if(input == "Lying")//현재 input이 Lying인 경우
+            {
+                state ="Case4";//사용자가 누워있으므로 Case4를 유지한다.
+            }
+            else if(input=="Stand"||input=="Sit"||input=="Nobody")//input이 Stand or Sit or Nobody인 경우
+            {
+                state = "Case2";//사용자가 일어났으므로 State를 Case2로 업데이트한다.
+            }
+        }
+        return state// update된 State를 return한다.
+    }
+    function indexOfMax(arr)//가장 높은 probability가진 arr 배열의 index를 return하는 함수
+    {
+        if (arr.length === 0) 
+        {
+            return -1;
+        }
+
+        var max = arr[0];
+        var maxIndex = 0;
+        
+        for (var i = 1; i < arr.length; i++)
+        {
+            if (arr[i] > max) {
+                maxIndex = i;
+                max = arr[i];
+            }
+        }
+
+        return maxIndex;
+    }
+    function drawPose(pose) {
+        if (webcam.canvas) {
+            ctx.drawImage(webcam.canvas, 0, 0);
+            // draw the keypoints and skeleton
+            if (pose) {
+                const minPartConfidence = 0.5;
+                tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+            }
+        }
+    }
+</script>
+<script>// HTML에 알람 설정 기능을 부여하는 Script
+    var alarmTimer = null;
+    var alarmSet;
+    function setAlarm()   { alarmSet = true;  }
+    function clearAlarm() { alarmSet = false; }
+    function initAlarm()
+    {
+        if (alarmTimer!=null)clearInterval(alarmTimer);
+        var nowTime = new Date();//현재 시간 load
+        clearAlarm();//변수 alarmSem에 false 대입
+        document.exf1.h.value = nowTime.getHours();//현재 시 대입
+        document.exf1.m.value = nowTime.getMinutes();//현재 분 대입
+        document.exf1.s.value = nowTime.getSeconds();//현재 초 대입
+        //알람 설정을 위한 변수 -> 사용자가 HTML에 시간 입력하여 알람 설정
+        alarmTimer=setInterval("countTime()",1000);//1초마다 alarmTime update
+    }
+    function matchH() { return (document.exf1.ch.value == document.exf1.h.value); }
+    function matchM() { return (document.exf1.cm.value == document.exf1.m.value); }
+    function matchS() { return (document.exf1.cs.value == document.exf1.s.value); }
+    function countTime() 
+    {
+        var nowTime = new Date();//현재 시간 load
+        document.exf1.ch.value = nowTime.getHours();//현재 시 대입
+        document.exf1.cm.value = nowTime.getMinutes();//현재 분 대입
+        document.exf1.cs.value = nowTime.getSeconds();//현재 초 대입
+        if (matchH() && matchM() && matchS()) //설정한 알림 시간과 현재 시간이 일치할 때
+        {
+            init();//init()함수 호출 -> 딥러닝 모델 load, 학습된 data load, Webcam initialize
+            audio1.volume = 0.2;//오디오1의 볼륨 0.2로 설정
+            audio1.play();//오디오1 play
+            Down();
+        }
+    }
+    onload=initAlarm;//Script 시작될 때 initAlarm 실행
+</script>
+<script>//HTML에 제한시간을 표시하고 남은 시간을 출력하는 기능을 가진 Script
+    var down;
+    var min1,sec1;
+    var cmin2,csec2;
+
+    function Minutes(data) {
+        for(var i=0;i<data.length;i++) if(data.substring(i,i+1)==":") break;
+        return(data.substring(0,i)); }
+
+    function Seconds(data) {
+        for(var i=0;i<data.length;i++) if(data.substring(i,i+1)==":") break;
+        return(data.substring(i+1,data.length)); }
+
+    function Display(min,sec) {
+        var disp;
+            if(min<=9) disp=" 0";
+                else disp=" ";
+                    disp+=min+":";
+            if(sec<=9) disp+="0"+sec;
+                else disp+=sec;
+                return(disp); }//HTML에 표시하는 함수
+
+    function Down() {
+        cmin2=1*Minutes(document.sw.beg2.value);
+        csec2=0+Seconds(document.sw.beg2.value);
+        DownRepeat(); }//Countdown하는 함수
+
+    function DownRepeat() {
+        csec2--;
+        if(csec2==-1) { csec2=59; cmin2--; }
+            document.sw.disp2.value=Display(cmin2,csec2);
+        if((cmin2==0)&&(csec2==0)) 
+        {
+            limit=1;
+        }
+        else down=setTimeout("DownRepeat()",1000); }
+</script>
+</body>
+</html>
